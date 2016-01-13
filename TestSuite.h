@@ -49,5 +49,71 @@ namespace LTest {
 		void start();
 	};
 
+  class CaseEndNotifier {
+  public:
+    virtual ~CaseEndNotifier() = default;
+
+  public:
+    virtual void done(std::exception_ptr e) = 0;
+  };
+
+  using SharedCaseEndNotifier = std::shared_ptr<CaseEndNotifier>;
+
+  // the structure of the test cases
+  class SequenceTestSpec : public std::enable_shared_from_this<TestRunable>, public TestRunable {
+  private:
+    struct TestCase {
+      std::string should;
+      std::function<void()> verifyBehaviour;
+
+      std::shared_ptr<TestCase> next;
+
+    public:
+      template<typename String>
+      TestCase(String&& should, std::function<void()>&& behaviour)
+        : should{ std::forward<String>(should) }
+        , verifyBehaviour{ std::move(behaviour) }
+        , next { nullptr }
+      {}
+    };
+
+    class TestCaseLinkedHead : public CaseEndNotifier {
+    private:
+      std::shared_ptr<TestRunable> _runnable;
+      std::shared_ptr<TestCase> _currentCase;
+
+    public:
+      virtual void done(std::exception_ptr e) override;
+    };  
+
+  private:
+    std::shared_ptr<TestCaseLinkedHead> _head;
+    std::weak_ptr<TestCase> _tail;
+
+  public:
+    // sync
+    template<typename String>
+    SequenceTestSpec& it(String&& should, std::function<void()>&& verifyBehaviour) {
+      return *this;
+    }
+
+    // asnyc
+    template<typename String>
+    SequenceTestSpec& it(String&& should, std::function<void(const SharedCaseEndNotifier&)>&& verifyBehaviour) {
+      return *this;
+    }
+
+  public:
+    virtual void run(TestRunnableContainer& container) {
+
+    }
+
+    virtual void scheduleToRun(const SharedTestRunnable& runnable);
+
+    // whenever a case begin to run
+    virtual void beginRun();
+    virtual void endRun();
+  };
+
 } // LTest
 
