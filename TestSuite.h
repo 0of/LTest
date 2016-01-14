@@ -6,6 +6,8 @@
 * https://github.com/0of/LTest/blob/master/LICENSE
 */
 #include <iostream>
+#include <memory>
+#include <mutex>
 
 namespace LTest {
 	
@@ -34,19 +36,35 @@ namespace LTest {
 		virtual void endRun();
 	};
 
-	class SequenceTestRunnableContainer : public TestRunnableContainer {
+	class SequentialTestRunnableContainer : public TestRunnableContainer {
 	private:
+    std::once_flag _called;
+
 		SharedTestRunnable _aboutToRun;
 		SharedTestRunnable _running;
 
 	public:
-		virtual ~SequenceTestRunnableContainer() = default;
+		virtual ~SequentialTestRunnableContainer() = default;
 
 	public:
-		virtual scheduleToRun(const SharedTestRunnable& runnable);
+		virtual void scheduleToRun(const SharedTestRunnable& runnable);
 
 	public:
-		void start();
+		void start() {
+      std::call_once(_called, [this]{
+        if (_aboutToRun) {
+          startTheLoop();
+        }
+      });
+    }
+
+  private:
+    void startTheLoop() {
+      while (_aboutToRun) {
+        _running = std::move(_aboutToRun);
+        _running->run(*this);
+      }
+    }
 	};
 
   class CaseEndNotifier {
@@ -54,13 +72,14 @@ namespace LTest {
     virtual ~CaseEndNotifier() = default;
 
   public:
-    virtual void done(std::exception_ptr e) = 0;
+    virtual void fail(std::exception_ptr e) noexcept = 0;
+    virtual void done() noexcept = 0;
   };
 
   using SharedCaseEndNotifier = std::shared_ptr<CaseEndNotifier>;
 
   // the structure of the test cases
-  class SequenceTestSpec : public std::enable_shared_from_this<TestRunable>, public TestRunable {
+  class SequentialTestSpec : public std::enable_shared_from_this<TestRunable>, public TestRunable {
   private:
     struct TestCase {
       std::string should;
@@ -77,13 +96,26 @@ namespace LTest {
       {}
     };
 
+    using SharedTestCase = std::shared_ptr<TestCase>;
+
     class TestCaseLinkedHead : public CaseEndNotifier {
     private:
-      std::shared_ptr<TestRunable> _runnable;
-      std::shared_ptr<TestCase> _currentCase;
+      TestRunnableContainer *_container;
+      SharedTestCase _currentCase;
 
     public:
-      virtual void done(std::exception_ptr e) override;
+      virtual void fail(std::exception_ptr e) noexcept override;
+      virtual void done() noexcept override;
+
+    public:
+      TestCaseLinkedHead& operator = (const SharedTestCase& headTestCase) {
+        _currentCase = headTestCase;
+        return *this;
+      }
+
+    public:
+      void letItRun(TestRunnableContainer& container);
+      bool isRunning() const { return _container; }
     };  
 
   private:
@@ -93,26 +125,50 @@ namespace LTest {
   public:
     // sync
     template<typename String>
-    SequenceTestSpec& it(String&& should, std::function<void()>&& verifyBehaviour) {
-      return *this;
+    SequentialTestSpec& it(String&& should, std::function<void()>&& verifyBehaviour) {
+      return append(
+        std::make_shared<SharedTestCase::element_type>(std::forward<String>(should), [behaviour = std::move(verifyBehaviour), notifier = _head] {
+          try {
+            behaviour();
+            notifier->done();
+          }
+          catch (...) {
+            notifier->fail(std::current_exception());
+          }
+        })
+      );
     }
 
     // asnyc
     template<typename String>
-    SequenceTestSpec& it(String&& should, std::function<void(const SharedCaseEndNotifier&)>&& verifyBehaviour) {
-      return *this;
+    SequentialTestSpec& it(String&& should, std::function<void(const SharedCaseEndNotifier&)>&& verifyBehaviour) {
+      return append(
+        std::make_shared<SharedTestCase::element_type>(std::forward<String>(should), 
+                                                       std::bind(verifyBehaviour, _head))
+      );
     }
 
   public:
     virtual void run(TestRunnableContainer& container) {
-
+      container.beginRun();
+      _head->letItRun(container);
+      // #
+      container.endRun();
     }
 
-    virtual void scheduleToRun(const SharedTestRunnable& runnable);
+  private:
+    SequentialTestSpec& append(const SharedTestCase& testCase) {
+      SharedTestCase tail = _tail.lock();
 
-    // whenever a case begin to run
-    virtual void beginRun();
-    virtual void endRun();
+      if (!tail) {
+        tail->next = testCase;
+      } else {
+        *_head = testCase;
+      }
+
+      _tail = testCase;
+      return *this;
+    }
   };
 
 } // LTest
