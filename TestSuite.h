@@ -8,6 +8,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <thread>
 
 namespace LTest {
 	
@@ -18,7 +19,7 @@ namespace LTest {
 		virtual ~TestRunable() = default;
 
 	public:
-		virtual void run(TestRunnableContainer& container) = 0;
+		virtual void run(TestRunnableContainer& container) noexcept = 0;
 	};
 
 	using SharedTestRunnable = std::shared_ptr<TestRunable>;
@@ -29,11 +30,11 @@ namespace LTest {
 		virtual ~TestRunnableContainer() = default;
 
 	public:
-		virtual void scheduleToRun(const SharedTestRunnable& runnable);
+		virtual void scheduleToRun(const SharedTestRunnable& runnable) = 0;
 
 		// whenever a case begin to run
-		virtual void beginRun();
-		virtual void endRun();
+		virtual void beginRun() = 0;
+		virtual void endRun() = 0;
 	};
 
 	class SequentialTestRunnableContainer : public TestRunnableContainer {
@@ -47,7 +48,16 @@ namespace LTest {
 		virtual ~SequentialTestRunnableContainer() = default;
 
 	public:
-		virtual void scheduleToRun(const SharedTestRunnable& runnable);
+		virtual void scheduleToRun(const SharedTestRunnable& runnable) override {
+      _aboutToRun = runnable;
+    }
+
+    virtual void beginRun() override {
+      // do nothing
+    }
+    virtual void endRun() override {
+      _running = nullptr;
+    }
 
 	public:
 		void start() {
@@ -60,9 +70,22 @@ namespace LTest {
 
   private:
     void startTheLoop() {
-      while (_aboutToRun) {
-        _running = std::move(_aboutToRun);
-        _running->run(*this);
+      while (true) {
+        if (!_aboutToRun) {
+          if (!_running) {
+            break;
+          } else {
+            std::this_thread::yield();
+          }
+        } else {
+          if (!_running) {
+            // start the runnable
+            _running = std::move(_aboutToRun);
+            _running->run(*this);
+          } else {
+            std::this_thread::yield();
+          }
+        }
       }
     }
 	};
@@ -92,11 +115,27 @@ namespace LTest {
       TestCase(String&& should, std::function<void()>&& behaviour)
         : should{ std::forward<String>(should) }
         , verifyBehaviour{ std::move(behaviour) }
-        , next { nullptr }
+        , next{ nullptr }
       {}
     };
 
     using SharedTestCase = std::shared_ptr<TestCase>;
+
+    class TestCaseRunnable : public TestRunable {
+    private:
+      SharedTestCase _testCase;
+
+    public:
+      TestCaseRunnable(const SharedTestCase& testCase)
+        : _testCase{ testCase } 
+      {}
+
+    public:
+      virtual void run(TestRunnableContainer& container) noexcept override {
+        container.beginRun();
+        _testCase->verifyBehaviour();
+      }
+    };
 
     class TestCaseLinkedHead : public CaseEndNotifier {
     private:
@@ -104,8 +143,29 @@ namespace LTest {
       SharedTestCase _currentCase;
 
     public:
-      virtual void fail(std::exception_ptr e) noexcept override;
-      virtual void done() noexcept override;
+      virtual void fail(std::exception_ptr e) noexcept override {
+        SharedTestCase next = _currentCase->next;
+
+        if (next) {
+          _container->scheduleToRun(std::make_shared<TestCaseRunnable>(next));
+        }
+        
+        _container->endRun();
+
+        _currentCase = next;
+      }
+
+      virtual void done() noexcept override {
+        SharedTestCase next = _currentCase->next;
+
+        if (next) {
+          _container->scheduleToRun(std::make_shared<TestCaseRunnable>(next));
+        }
+        
+        _container->endRun();
+
+        _currentCase = next;
+      }
 
     public:
       TestCaseLinkedHead& operator = (const SharedTestCase& headTestCase) {
@@ -114,7 +174,14 @@ namespace LTest {
       }
 
     public:
-      void letItRun(TestRunnableContainer& container);
+      void letItRun(TestRunnableContainer& container) {
+        // hold the container
+        _container = &container;
+
+        if (_currentCase) {
+          _container->scheduleToRun(std::make_shared<TestCaseRunnable>(_currentCase));
+        }
+      }
       bool isRunning() const { return _container; }
     };  
 
@@ -126,6 +193,10 @@ namespace LTest {
     // sync
     template<typename String>
     SequentialTestSpec& it(String&& should, std::function<void()>&& verifyBehaviour) {
+      if (_head->isRunning()) {
+        throw 0;
+      }
+
       return append(
         std::make_shared<SharedTestCase::element_type>(std::forward<String>(should), [behaviour = std::move(verifyBehaviour), notifier = _head] {
           try {
@@ -142,6 +213,10 @@ namespace LTest {
     // asnyc
     template<typename String>
     SequentialTestSpec& it(String&& should, std::function<void(const SharedCaseEndNotifier&)>&& verifyBehaviour) {
+      if (_head->isRunning()) {
+        throw 0;
+      }
+
       return append(
         std::make_shared<SharedTestCase::element_type>(std::forward<String>(should), 
                                                        std::bind(verifyBehaviour, _head))
@@ -149,10 +224,9 @@ namespace LTest {
     }
 
   public:
-    virtual void run(TestRunnableContainer& container) {
+    virtual void run(TestRunnableContainer& container) noexcept {
       container.beginRun();
       _head->letItRun(container);
-      // #
       container.endRun();
     }
 
