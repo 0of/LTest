@@ -208,6 +208,12 @@ namespace LTest {
       SharedTestCase _currentCase;
 
     public:
+      TestCaseLinkedHead()
+        : _container{ nullptr }
+        , _currentCase{}
+      {}
+
+    public:
       virtual void fail(std::exception_ptr e) noexcept override {
         SharedTestCase next = _currentCase->next;
 
@@ -255,6 +261,12 @@ namespace LTest {
     std::weak_ptr<TestCase> _tail;
 
   public:
+    SequentialTestSpec()
+      : _head{std::make_shared<TestCaseLinkedHead>()}
+      , _tail{}
+    {}
+
+  public:
     // sync
     template<typename String>
     SequentialTestSpec& it(String&& should, std::function<void()>&& verifyBehaviour) {
@@ -299,8 +311,8 @@ namespace LTest {
     SequentialTestSpec& append(const SharedTestCase& testCase) {
       SharedTestCase tail = _tail.lock();
 
-      if (!tail) {
-        tail->next = testCase;
+      if (tail) {
+         tail->next = testCase;
       } else {
         *_head = testCase;
       }
