@@ -9,6 +9,10 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <chrono>
+
+//! apply chrono literals
+using namespace std::literals::chrono_literals;
 
 namespace LTest {
 	
@@ -44,6 +48,63 @@ namespace LTest {
 		SharedTestRunnable _aboutToRun;
 		SharedTestRunnable _running;
 
+    class MonitorThread {
+    public:
+      static std::unique_ptr<MonitorThread> New() {
+        auto thread = std::make_unique<MonitorThread>();
+        if (!thread->_activationMutex.try_lock_for(1s)) {
+          // timeout
+          throw 0;
+        }
+
+        return std::move(thread);
+      }
+
+    private:
+      std::thread _thread;
+
+      std::atomic<bool> _isIdle;
+      std::atomic<bool> _needToShutdown;
+      std::timed_mutex _timedMutex;
+      std::timed_mutex _activationMutex;
+
+    public:
+      MonitorThread()
+        : _thread([this] {
+          // monitor thread has been activated
+          _activationMutex.unlock();
+
+          while (!_needToShutdown) {
+            if (_isIdle) {
+              std::this_thread::yield();
+              continue;
+            }
+
+            std::unique_lock<decltype(_timedMutex)> timedLock{ _timedMutex, std::defer_lock };
+            if (!timedLock.try_lock_for(500ms)) {
+              // time out
+              _isIdle = true;
+            }
+          }
+        }) {
+        _thread.detach();
+      }
+      ~MonitorThread() = default;
+
+    public:
+      void notifyBeginRun() {
+        _timedMutex.lock();
+        _isIdle = false;
+      }
+
+      void notifyEndRun() {
+        _isIdle = true;
+        _timedMutex.unlock();
+      }
+    };
+
+    decltype(MonitorThread::New()) _monitorThread;
+
 	public:
 		virtual ~SequentialTestRunnableContainer() = default;
 
@@ -53,9 +114,10 @@ namespace LTest {
     }
 
     virtual void beginRun() override {
-      // do nothing
+      _monitorThread->notifyBeginRun();
     }
     virtual void endRun() override {
+      _monitorThread->notifyEndRun();
       _running = nullptr;
     }
 
@@ -63,6 +125,9 @@ namespace LTest {
 		void start() {
       std::call_once(_called, [this]{
         if (_aboutToRun) {
+          // init monitor thread
+          _monitorThread = std::move(MonitorThread::New());
+
           startTheLoop();
         }
       });
