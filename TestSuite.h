@@ -15,38 +15,38 @@
 using namespace std::literals::chrono_literals;
 
 namespace LTest {
-	
-	class TestRunnableContainer;
+  
+  class TestRunnableContainer;
 
-	class TestRunable {
-	public:
-		virtual ~TestRunable() = default;
+  class TestRunable {
+  public:
+    virtual ~TestRunable() = default;
 
-	public:
-		virtual void run(TestRunnableContainer& container) noexcept = 0;
-	};
+  public:
+    virtual void run(TestRunnableContainer& container) noexcept = 0;
+  };
 
-	using SharedTestRunnable = std::shared_ptr<TestRunable>;
+  using SharedTestRunnable = std::shared_ptr<TestRunable>;
 
-	// all the cases run inside the container
-	class TestRunnableContainer {
-	public:
-		virtual ~TestRunnableContainer() = default;
+  // all the cases run inside the container
+  class TestRunnableContainer {
+  public:
+    virtual ~TestRunnableContainer() = default;
 
-	public:
-		virtual void scheduleToRun(const SharedTestRunnable& runnable) = 0;
+  public:
+    virtual void scheduleToRun(const SharedTestRunnable& runnable) = 0;
 
-		// whenever a case begin to run
-		virtual void beginRun() = 0;
-		virtual void endRun() = 0;
-	};
+    // whenever a case begin to run
+    virtual void beginRun() = 0;
+    virtual void endRun() = 0;
+  };
 
-	class SequentialTestRunnableContainer : public TestRunnableContainer {
-	private:
+  class SequentialTestRunnableContainer : public TestRunnableContainer {
+  private:
     std::once_flag _called;
 
-		SharedTestRunnable _aboutToRun;
-		SharedTestRunnable _running;
+    SharedTestRunnable _aboutToRun;
+    SharedTestRunnable _running;
 
     class MonitorThread {
     public:
@@ -105,11 +105,11 @@ namespace LTest {
 
     decltype(MonitorThread::New()) _monitorThread;
 
-	public:
-		virtual ~SequentialTestRunnableContainer() = default;
+  public:
+    virtual ~SequentialTestRunnableContainer() = default;
 
-	public:
-		virtual void scheduleToRun(const SharedTestRunnable& runnable) override {
+  public:
+    virtual void scheduleToRun(const SharedTestRunnable& runnable) override {
       _aboutToRun = runnable;
     }
 
@@ -121,8 +121,8 @@ namespace LTest {
       _running = nullptr;
     }
 
-	public:
-		void start() {
+  public:
+    void start() {
       std::call_once(_called, [this]{
         if (_aboutToRun) {
           // init monitor thread
@@ -153,7 +153,7 @@ namespace LTest {
         }
       }
     }
-	};
+  };
 
   class CaseEndNotifier {
   public:
