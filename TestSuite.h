@@ -6,6 +6,7 @@
 * https://github.com/0of/LTest/blob/master/LICENSE
 */
 #include <iostream>
+#include <sstream>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -15,38 +16,41 @@
 using namespace std::literals::chrono_literals;
 
 namespace LTest {
-	
-	class TestRunnableContainer;
+  
+  class TestRunnableContainer;
 
-	class TestRunable {
-	public:
-		virtual ~TestRunable() = default;
+  class TestRunable {
+  public:
+    virtual ~TestRunable() = default;
 
-	public:
-		virtual void run(TestRunnableContainer& container) noexcept = 0;
-	};
+  public:
+    virtual void run(TestRunnableContainer& container) noexcept = 0;
+  };
 
-	using SharedTestRunnable = std::shared_ptr<TestRunable>;
+  using SharedTestRunnable = std::shared_ptr<TestRunable>;
 
-	// all the cases run inside the container
-	class TestRunnableContainer {
-	public:
-		virtual ~TestRunnableContainer() = default;
+  // all the cases run inside the container
+  class TestRunnableContainer {
+  public:
+    virtual ~TestRunnableContainer() = default;
 
-	public:
-		virtual void scheduleToRun(const SharedTestRunnable& runnable) = 0;
+  public:
+    virtual void scheduleToRun(const SharedTestRunnable& runnable) = 0;
 
-		// whenever a case begin to run
-		virtual void beginRun() = 0;
-		virtual void endRun() = 0;
-	};
+    // whenever a case begin to run
+    virtual void beginRun() = 0;
+    virtual void endRun() = 0;
+  };
 
-	class SequentialTestRunnableContainer : public TestRunnableContainer {
-	private:
+  class SequentialTestRunnableContainer : public TestRunnableContainer {
+  private:
     std::once_flag _called;
 
-		SharedTestRunnable _aboutToRun;
-		SharedTestRunnable _running;
+    SharedTestRunnable _aboutToRun;
+    SharedTestRunnable _running;
+
+    std::ostringstream _redirectCout;
+    std::streambuf *_coutStreamBuf{ nullptr };
 
     class MonitorThread {
     public:
@@ -105,11 +109,11 @@ namespace LTest {
 
     decltype(MonitorThread::New()) _monitorThread;
 
-	public:
-		virtual ~SequentialTestRunnableContainer() = default;
+  public:
+    virtual ~SequentialTestRunnableContainer() = default;
 
-	public:
-		virtual void scheduleToRun(const SharedTestRunnable& runnable) override {
+  public:
+    virtual void scheduleToRun(const SharedTestRunnable& runnable) override {
       _aboutToRun = runnable;
     }
 
@@ -121,8 +125,8 @@ namespace LTest {
       _running = nullptr;
     }
 
-	public:
-		void start() {
+  public:
+    void start() {
       std::call_once(_called, [this]{
         if (_aboutToRun) {
           // init monitor thread
@@ -138,14 +142,21 @@ namespace LTest {
       while (true) {
         if (!_aboutToRun) {
           if (!_running) {
+            // restore cout
+            restoreCout();
             break;
           } else {
             std::this_thread::yield();
           }
         } else {
           if (!_running) {
+            restoreCout();
+
             // start the runnable
             _running = std::move(_aboutToRun);
+
+            redirectCout();
+
             _running->run(*this);
           } else {
             std::this_thread::yield();
@@ -153,7 +164,24 @@ namespace LTest {
         }
       }
     }
-	};
+
+    void redirectCout() {
+      // redirect cout
+      _coutStreamBuf = std::cout.rdbuf();
+      std::cout.rdbuf(_redirectCout.rdbuf());
+    }
+
+    void restoreCout() {
+      if (_coutStreamBuf) {
+        std::cout.rdbuf(_coutStreamBuf);
+        _coutStreamBuf = nullptr;
+
+        // flush 
+        std::cout << _redirectCout.str() << std::endl;
+        _redirectCout.str("");
+      }
+    }
+  };
 
   class CaseEndNotifier {
   public:
@@ -198,6 +226,7 @@ namespace LTest {
     public:
       virtual void run(TestRunnableContainer& container) noexcept override {
         container.beginRun();
+        std::cout << "\x1b[4;36m" << "it " << _testCase->should;
         _testCase->verifyBehaviour();
       }
     };
@@ -207,6 +236,9 @@ namespace LTest {
       TestRunnableContainer *_container;
       SharedTestCase _currentCase;
 
+      std::uint32_t _totalCaseCount { 0 };
+      std::uint32_t _succeededCaseCount { 0 };
+
     public:
       TestCaseLinkedHead()
         : _container{ nullptr }
@@ -215,6 +247,8 @@ namespace LTest {
 
     public:
       virtual void fail(std::exception_ptr e) noexcept override {
+        std::cout << "\x1b[22;31m" << u8"\xE2\x9D\x8C" /* cross mark */ << "\x1b[0m" << std::endl;
+
         SharedTestCase next = _currentCase->next;
 
         if (next) {
@@ -227,6 +261,8 @@ namespace LTest {
       }
 
       virtual void done() noexcept override {
+        std::cout << "\x1b[22;32m" << u8"\xE2\x9C\x93" /* check mark */ << "\x1b[0m" << std::endl;
+
         SharedTestCase next = _currentCase->next;
 
         if (next) {
@@ -245,9 +281,10 @@ namespace LTest {
       }
 
     public:
-      void letItRun(TestRunnableContainer& container) {
+      void letItRun(std::uint32_t totalCount, TestRunnableContainer& container) {
         // hold the container
         _container = &container;
+        _totalCaseCount = totalCount;
 
         if (_currentCase) {
           _container->scheduleToRun(std::make_shared<TestCaseRunnable>(_currentCase));
@@ -259,6 +296,8 @@ namespace LTest {
   private:
     std::shared_ptr<TestCaseLinkedHead> _head;
     std::weak_ptr<TestCase> _tail;
+
+    std::uint32_t _totalCaseCount { 0 };
 
   public:
     SequentialTestSpec()
@@ -284,7 +323,7 @@ namespace LTest {
             notifier->fail(std::current_exception());
           }
         })
-      );
+      ).incCaseCount();
     }
 
     // asnyc
@@ -297,13 +336,13 @@ namespace LTest {
       return append(
         std::make_shared<SharedTestCase::element_type>(std::forward<String>(should), 
                                                        std::bind(verifyBehaviour, _head))
-      );
+      ).incCaseCount();
     }
 
   public:
     virtual void run(TestRunnableContainer& container) noexcept {
       container.beginRun();
-      _head->letItRun(container);
+      _head->letItRun(_totalCaseCount, container);
       container.endRun();
     }
 
@@ -318,6 +357,11 @@ namespace LTest {
       }
 
       _tail = testCase;
+      return *this;
+    }
+
+    SequentialTestSpec& incCaseCount() {
+      ++_totalCaseCount;
       return *this;
     }
   };
