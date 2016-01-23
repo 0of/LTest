@@ -6,7 +6,6 @@
 * https://github.com/0of/LTest/blob/master/LICENSE
 */
 #include <iostream>
-#include <sstream>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -40,6 +39,8 @@ namespace LTest {
     // whenever a case begin to run
     virtual void beginRun() = 0;
     virtual void endRun() = 0;
+
+    virtual bool isTimeout(const SharedTestRunnable& ) const = 0;
   };
 
   class SequentialTestRunnableContainer : public TestRunnableContainer {
@@ -48,9 +49,6 @@ namespace LTest {
 
     SharedTestRunnable _aboutToRun;
     SharedTestRunnable _running;
-
-    std::ostringstream _redirectCout;
-    std::streambuf *_coutStreamBuf{ nullptr };
 
     class MonitorThread {
     public:
@@ -73,6 +71,9 @@ namespace LTest {
       std::timed_mutex _activationMutex;
 
     public:
+      std::atomic<bool> isTimeout;
+    
+    public:
       MonitorThread()
         : _thread([this] {
           // monitor thread has been activated
@@ -87,6 +88,7 @@ namespace LTest {
             std::unique_lock<decltype(_timedMutex)> timedLock{ _timedMutex, std::defer_lock };
             if (!timedLock.try_lock_for(500ms)) {
               // time out
+              isTimeout = true;
               _isIdle = true;
             }
           }
@@ -118,13 +120,20 @@ namespace LTest {
     }
 
     virtual void beginRun() override {
+      redirectCout();
+
       _monitorThread->notifyBeginRun();
     }
     virtual void endRun() override {
+      restoreCout();
+
       _monitorThread->notifyEndRun();
       _running = nullptr;
     }
 
+    virtual bool isTimeout(const SharedTestRunnable& /* ignore */) const override {
+      return _monitorThread->isTimeout;
+    }
   public:
     void start() {
       std::call_once(_called, [this]{
@@ -142,21 +151,16 @@ namespace LTest {
       while (true) {
         if (!_aboutToRun) {
           if (!_running) {
-            // restore cout
-            restoreCout();
             break;
           } else {
             std::this_thread::yield();
           }
         } else {
           if (!_running) {
-            restoreCout();
+            _monitorThread->isTimeout = false;
 
             // start the runnable
             _running = std::move(_aboutToRun);
-
-            redirectCout();
-
             _running->run(*this);
           } else {
             std::this_thread::yield();
@@ -166,20 +170,11 @@ namespace LTest {
     }
 
     void redirectCout() {
-      // redirect cout
-      _coutStreamBuf = std::cout.rdbuf();
-      std::cout.rdbuf(_redirectCout.rdbuf());
+      // TODO:
     }
 
     void restoreCout() {
-      if (_coutStreamBuf) {
-        std::cout.rdbuf(_coutStreamBuf);
-        _coutStreamBuf = nullptr;
-
-        // flush 
-        std::cout << _redirectCout.str() << std::endl;
-        _redirectCout.str("");
-      }
+      // TODO:
     }
   };
 
@@ -226,7 +221,6 @@ namespace LTest {
     public:
       virtual void run(TestRunnableContainer& container) noexcept override {
         container.beginRun();
-        std::cout << "\x1b[4;36m" << "it " << _testCase->should;
         _testCase->verifyBehaviour();
       }
     };
@@ -247,31 +241,56 @@ namespace LTest {
 
     public:
       virtual void fail(std::exception_ptr e) noexcept override {
-        std::cout << "\x1b[22;31m" << u8"\xE2\x9D\x8C" /* cross mark */ << "\x1b[0m" << std::endl;
-
         SharedTestCase next = _currentCase->next;
 
+        bool allFinished = true;
         if (next) {
           _container->scheduleToRun(std::make_shared<TestCaseRunnable>(next));
+          allFinished = false;
         }
         
         _container->endRun();
 
+        std::cout << std::endl;
+        std::cout << "\x1b[4;22;31m" << "it " << _currentCase->should
+                  << "\x1b[22;24;31m" << '\x20' << u8"\xE2\x9D\x8C" /* cross mark */ << "\x1b[0m" 
+                  << std::endl;
+        
         _currentCase = next;
+      
+        if (allFinished) {
+          outputWhenAllFinished();
+        }
       }
 
       virtual void done() noexcept override {
-        std::cout << "\x1b[22;32m" << u8"\xE2\x9C\x93" /* check mark */ << "\x1b[0m" << std::endl;
-
         SharedTestCase next = _currentCase->next;
 
+        bool allFinished = true;
         if (next) {
           _container->scheduleToRun(std::make_shared<TestCaseRunnable>(next));
+          allFinished = false;
         }
         
         _container->endRun();
+        std::cout << std::endl;
+        
+        if (_container->isTimeout(nullptr)) {
+          std::cout << "\x1b[4;22;33m" << "it " << _currentCase->should
+                    << "\x1b[22;24;33m" << '\x20' << u8"\xE2\x9C\x93" /* check mark */ << "\x20(timeout)" << "\x1b[0m" 
+                    << std::endl;
+        } else {
+          std::cout << "\x1b[4;22;32m" << "it " << _currentCase->should
+                    << "\x1b[22;24;32m" << '\x20' << u8"\xE2\x9C\x93" /* check mark */ << "\x1b[0m" 
+                    << std::endl;
+        }
 
+        ++_succeededCaseCount;
         _currentCase = next;
+
+        if (allFinished) {
+          outputWhenAllFinished();
+        }
       }
 
     public:
@@ -291,6 +310,15 @@ namespace LTest {
         }
       }
       bool isRunning() const { return _container; }
+
+    private:
+      void outputWhenAllFinished() {
+        std::cout << std::endl;
+        std::cout << "total:" << "\x1b[1m" << _totalCaseCount << "\x1b[0m"
+                    << '\x20' << "pass:" << "\x1b[1;22;32m" << _succeededCaseCount << "\x1b[0m"
+                    << '\x20' << "fail:" << "\x1b[1;22;31m" << (_totalCaseCount - _succeededCaseCount) << "\x1b[0m"
+                    << std::endl;
+      }
     };  
 
   private:

@@ -18,6 +18,12 @@ void initSpec(LTest::SequentialTestSpec& spec) {
   .it("should work asynchronously", [](const LTest::SharedCaseEndNotifier& notifier) {
     std::cout << "ok";
     notifier->done();
+  })
+  .it("should be ok, but actually not)", []{
+    throwSomething();
+  })
+  .it("should be ok, but timeout", []{
+    std::this_thread::sleep_for(1s);
   });
 }
 
