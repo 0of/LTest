@@ -5,6 +5,9 @@
 * Licensed under the MIT license.
 * https://github.com/0of/LTest/blob/master/LICENSE
 */
+#ifndef TEST_SUITE_H
+#define TEST_SUITE_H
+
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -395,4 +398,7 @@ namespace LTest {
   };
 
 } // LTest
+
+#endif // TEST_SUITE_H
+
 
