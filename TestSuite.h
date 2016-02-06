@@ -315,7 +315,7 @@ namespace LTest {
           _container->scheduleToRun(std::make_shared<TestCaseRunnable>(_currentCase));
         }
       }
-      bool isRunning() const { return _container; }
+      bool isRunning() const { return !!_container; }
 
     private:
       void outputWhenAllFinished() {
