@@ -13,6 +13,9 @@
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <string>
+
+#include "declfn.h"
 
 //! apply chrono literals
 using namespace std::literals::chrono_literals;
@@ -256,7 +259,7 @@ namespace LTest {
 
         std::cout << std::endl;
         std::cout << "\x1b[4;22;31m" << "it " << _currentCase->should
-                  << "\x1b[22;24;31m" << '\x20' << u8"\xE2\x9D\x8C" /* cross mark */ << "\x1b[0m" 
+                  << "\x1b[22;24;31m" << '\x20' << "\xE2\x9D\x8C" /* cross mark */ << "\x1b[0m" 
                   << std::endl;
         
         _currentCase = next;
@@ -280,11 +283,11 @@ namespace LTest {
         
         if (_container->isTimeout(nullptr)) {
           std::cout << "\x1b[4;22;33m" << "it " << _currentCase->should
-                    << "\x1b[22;24;33m" << '\x20' << u8"\xE2\x9C\x93" /* check mark */ << "\x20(timeout)" << "\x1b[0m" 
+                    << "\x1b[22;24;33m" << '\x20' << "\xE2\x9C\x93" /* check mark */ << "\x20(timeout)" << "\x1b[0m" 
                     << std::endl;
         } else {
           std::cout << "\x1b[4;22;32m" << "it " << _currentCase->should
-                    << "\x1b[22;24;32m" << '\x20' << u8"\xE2\x9C\x93" /* check mark */ << "\x1b[0m" 
+                    << "\x1b[22;24;32m" << '\x20' << "\xE2\x9C\x93" /* check mark */ << "\x1b[0m" 
                     << std::endl;
         }
 
@@ -337,6 +340,15 @@ namespace LTest {
     {}
 
   public:
+    template<typename String, typename VerifyBehaviour>
+    SequentialTestSpec& it(String&& should, VerifyBehaviour&& verifyBehaviour) {
+
+      auto verifyBehaviourFn = declfn(verifyBehaviour){ std::move(verifyBehaviour) };
+
+      static_assert(!std::is_same<decltype(verifyBehaviourFn), std::false_type>::value, "you need to provide a callable");
+      return it(std::forward<String>(should), std::move(verifyBehaviourFn));
+    }
+
     // sync
     template<typename String>
     SequentialTestSpec& it(String&& should, std::function<void()>&& verifyBehaviour) {
