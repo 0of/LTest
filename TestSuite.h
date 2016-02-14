@@ -152,8 +152,8 @@ namespace LTest {
       });
     }
 
-  private:
-    void startTheLoop() {
+  protected:
+    virtual void startTheLoop() {
       while (true) {
         if (!_aboutToRun) {
           if (!_running) {
@@ -254,8 +254,6 @@ namespace LTest {
           _container->scheduleToRun(std::make_shared<TestCaseRunnable>(next));
           allFinished = false;
         }
-        
-        _container->endRun();
 
         std::cout << std::endl;
         std::cout << "\x1b[4;22;31m" << "it " << _currentCase->should
@@ -267,6 +265,8 @@ namespace LTest {
         if (allFinished) {
           outputWhenAllFinished();
         }
+
+        _container->endRun();
       }
 
       virtual void done() noexcept override {
@@ -277,8 +277,7 @@ namespace LTest {
           _container->scheduleToRun(std::make_shared<TestCaseRunnable>(next));
           allFinished = false;
         }
-        
-        _container->endRun();
+
         std::cout << std::endl;
         
         if (_container->isTimeout(nullptr)) {
@@ -297,6 +296,8 @@ namespace LTest {
         if (allFinished) {
           outputWhenAllFinished();
         }
+
+        _container->endRun();
       }
 
     public:
