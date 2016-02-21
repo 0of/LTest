@@ -81,7 +81,7 @@ namespace LTest {
     
     public:
       MonitorThread()
-        : _thread()
+        : _thread() {
 
         _thread = std::move(std::thread {
           [this] {
