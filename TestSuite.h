@@ -81,26 +81,33 @@ namespace LTest {
     
     public:
       MonitorThread()
-        : _thread([this] {
-          // monitor thread has been activated
-          _activationMutex.unlock();
+        : _thread()
 
-          while (!_needToShutdown) {
-            if (_isIdle) {
-              std::this_thread::yield();
-              continue;
-            }
+        _thread = std::move(std::thread {
+          [this] {
+            // monitor thread has been activated
+            _activationMutex.unlock();
 
-            std::unique_lock<decltype(_timedMutex)> timedLock{ _timedMutex, std::defer_lock };
-            if (!timedLock.try_lock_for(500ms)) {
-              // time out
-              isTimeout = true;
-              _isIdle = true;
+            while (!_needToShutdown) {
+              if (_isIdle) {
+                std::this_thread::yield();
+                continue;
+              }
+
+              std::unique_lock<decltype(_timedMutex)> timedLock{ _timedMutex, std::defer_lock };
+              if (!timedLock.try_lock_for(500ms)) {
+                // time out
+                isTimeout = true;
+                _isIdle = true;
+              }
             }
           }
-        }) {
+          // end of constructor
+        });
+
         _thread.detach();
       }
+
       ~MonitorThread() = default;
 
     public:
@@ -347,12 +354,13 @@ namespace LTest {
       auto verifyBehaviourFn = declfn(verifyBehaviour){ std::move(verifyBehaviour) };
 
       static_assert(!std::is_same<decltype(verifyBehaviourFn), std::false_type>::value, "you need to provide a callable");
-      return it(std::forward<String>(should), std::move(verifyBehaviourFn));
+      return _it(std::forward<String>(should), std::move(verifyBehaviourFn));
     }
 
+  private:
     // sync
     template<typename String>
-    SequentialTestSpec& it(String&& should, std::function<void()>&& verifyBehaviour) {
+    SequentialTestSpec& _it(String&& should, std::function<void()>&& verifyBehaviour) {
       if (_head->isRunning()) {
         throw 0;
       }
@@ -372,7 +380,7 @@ namespace LTest {
 
     // asnyc
     template<typename String>
-    SequentialTestSpec& it(String&& should, std::function<void(const SharedCaseEndNotifier&)>&& verifyBehaviour) {
+    SequentialTestSpec& _it(String&& should, std::function<void(const SharedCaseEndNotifier&)>&& verifyBehaviour) {
       if (_head->isRunning()) {
         throw 0;
       }
