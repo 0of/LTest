@@ -203,7 +203,7 @@ namespace LTest {
   using SharedCaseEndNotifier = std::shared_ptr<CaseEndNotifier>;
 
   // the structure of the test cases
-  class SequentialTestSpec : public std::enable_shared_from_this<TestRunable>, public TestRunable {
+  class SequentialTestSpec : public TestRunable {
   private:
     struct TestCase {
       std::string should;
