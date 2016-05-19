@@ -14,6 +14,7 @@
 #include <thread>
 #include <chrono>
 #include <string>
+#include <atomic>
 
 #include "declfn.h"
 
